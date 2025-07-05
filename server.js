@@ -1,11 +1,10 @@
-// server.js h
 const express = require("express");
 const WebSocket = require("ws");
 const { v4 } = require("uuid");
 const playerlist = require("./playerlist.js");
 
 const app = express();
-const PORT = process.env.PORT || 9090;
+const PORT = 9090;
 const server = app.listen(PORT, () => {
     console.log("Server listening on port: " + PORT);
 });
@@ -94,5 +93,18 @@ wss.on("connection", async (socket) => {
 
     socket.on("close", () => {
         console.log(`Cliente ${uuid} desconectado.`);
+
+        // Remover da lista
+        playerlist.remove(uuid);
+
+        // Avisar os outros jogadores
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({
+                    cmd: "player_disconnected",
+                    content: { uuid }
+                }));
+            }
+        });
     });
 });

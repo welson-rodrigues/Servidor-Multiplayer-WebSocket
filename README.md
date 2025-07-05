@@ -1,6 +1,7 @@
 # Informações do Servidor (Node.js + WebSocket)
 
 Este servidor foi criado utilizando **Node.js** com as bibliotecas `express`, `ws` (WebSocket) e `uuid`, com foco em funcionar como backend para um jogo **multiplayer 2D na Godot Mobile (Godot 4.5)**.
+⚠️ Este servidor foi disponibilizado apenas para testes e demonstração. Recomendo que você configure o seu próprio servidor no Render, Termux ou outro serviço para uso real ou personalizado.
 
 ---
 

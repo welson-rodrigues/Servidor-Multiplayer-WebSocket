@@ -28,7 +28,7 @@ Instaladas via `npm install`:
 
 ---
 
-## Comandos WebSocket (servidor → cliente)
+## Comandos WebSocket (servidor/cliente)
 
 | Comando                 | Descrição                                   |
 | ----------------------- | ------------------------------------------- |

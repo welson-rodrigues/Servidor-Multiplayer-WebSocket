@@ -89,4 +89,4 @@ Criado por [ignurof](https://github.com/ignurof) em 2022
 
 ## Adaptado por
 
-**Welson Rodrigues** – Em 2025, para uso com **Godot 4.5 Mobile** e servidor online (Render)
+**Welson Rodrigues** Em 2025, para uso com **Godot 4.5 Mobile** e servidor online (Render)

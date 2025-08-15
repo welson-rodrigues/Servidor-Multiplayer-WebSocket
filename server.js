@@ -75,6 +75,22 @@ wss.on("connection", async (socket) => {
             });
         }
 
+        if (data.cmd === "action") {
+            // Reenvia a ação (ex: pulo) para todos os outros jogadores
+            const actionUpdate = {
+                cmd: "update_action", // Nova mensagem para os clientes
+                content: {
+                    uuid,
+                    name: data.content.name
+                }
+            };
+            wss.clients.forEach((client) => {
+                if (client !== socket && client.readyState === WebSocket.OPEN) {
+                    client.send(JSON.stringify(actionUpdate));
+                }
+            });
+        }
+
         if (data.cmd === "chat") {
             const chat = {
                 cmd: "new_chat_message",

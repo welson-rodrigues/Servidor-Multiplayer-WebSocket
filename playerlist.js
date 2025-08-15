@@ -19,8 +19,8 @@ const add = (uuid) => {
     return new Promise((resolve) => {
         let player = {
             uuid,
-            "x": 620,
-            "y": 300,
+            "x": 252.082946777344,
+            "y": 524.925109863281,
         };
         players.push(player);
         resolve(true);

@@ -2,7 +2,7 @@ const express = require("express");
 const WebSocket = require("ws");
 const { v4: uuidv4 } = require("uuid");
 
-console.log('Servidor com sistema de salas e portal INICIADO.');
+console.log('Servidor com re-sorteio de papéis INICIADO.');
 
 const app = express();
 const PORT = process.env.PORT || 9090;
@@ -32,17 +32,14 @@ wss.on("connection", (socket) => {
         try {
             data = JSON.parse(message.toString());
         } catch (err) {
-            console.error("Erro no JSON:", err);
             return;
         }
 
         const room = rooms.get(socket.roomId);
-        // Adicionamos uma verificação aqui: se a sala não existe E o comando não é para criar/entrar, ignora.
         if (!room && !["create_room", "join_room"].includes(data.cmd)) {
             return;
         }
 
-        // Lógica de comunicação DENTRO de uma partida (continua igual)
         if (room && ["position", "action", "chat"].includes(data.cmd)) {
             room.players.forEach(client => {
                 if (client !== socket && client.readyState === WebSocket.OPEN) {
@@ -58,17 +55,14 @@ wss.on("connection", (socket) => {
             return;
         }
 
-        // Lógica de GERENCIAMENTO DE SALA E JOGO
         switch (data.cmd) {
             case "create_room": {
                 const newRoomId = generateRoomCode();
-                // ALTERAÇÃO 1: A sala agora guarda um Set para os jogadores no portal
                 rooms.set(newRoomId, {
                     players: [socket],
-                    playersInPortal: new Set() // Guarda os UUIDs de quem está no portal
+                    playersInPortal: new Set()
                 });
                 socket.roomId = newRoomId;
-                console.log(`Jogador ${uuid} criou a sala ${newRoomId}.`);
                 socket.send(JSON.stringify({
                     cmd: "room_created",
                     content: { code: newRoomId, uuid: uuid }
@@ -77,75 +71,58 @@ wss.on("connection", (socket) => {
             }
 
             case "join_room": {
-                // ... (sua lógica de join_room continua exatamente a mesma) ...
                 const roomId = data.content.code.toUpperCase();
                 const roomToJoin = rooms.get(roomId);
-
-                if (!roomToJoin) {
-                    socket.send(JSON.stringify({ cmd: "error", content: { msg: "Sala não encontrada." } }));
+                if (!roomToJoin || roomToJoin.players.length >= 2) { 
+                    // Lógica de erro simplificada
+                    socket.send(JSON.stringify({ cmd: "error", content: { msg: "Sala não encontrada ou cheia." } }));
                     return;
                 }
-                if (roomToJoin.players.length >= 2) {
-                    socket.send(JSON.stringify({ cmd: "error", content: { msg: "A sala está cheia." } }));
-                    return;
-                }
-
                 socket.roomId = roomId;
                 roomToJoin.players.push(socket);
-                console.log(`Jogador ${uuid} entrou na sala ${roomId}. Iniciando jogo.`);
 
                 const [player1_socket, player2_socket] = roomToJoin.players;
                 const roles = ["prisioneiro", "ajudante"];
                 const isPlayer1Prisoner = Math.random() < 0.5;
                 const player1_role = isPlayer1Prisoner ? roles[0] : roles[1];
                 const player2_role = isPlayer1Prisoner ? roles[1] : roles[0];
-                const player1_start_pos = { x: 0, y: 0 }; 
-                const player2_start_pos = { x: 0, y: 0 };
-                const player1_data = { uuid: player1_socket.uuid, role: player1_role, x: player1_start_pos.x, y: player1_start_pos.y };
-                const player2_data = { uuid: player2_socket.uuid, role: player2_role, x: player2_start_pos.x, y: player2_start_pos.y };
+                const player1_data = { uuid: player1_socket.uuid, role: player1_role, x: 0, y: 0 };
+                const player2_data = { uuid: player2_socket.uuid, role: player2_role, x: 0, y: 0 };
 
                 player1_socket.send(JSON.stringify({ cmd: "game_started", content: { your_data: player1_data, other_player_data: player2_data } }));
                 player2_socket.send(JSON.stringify({ cmd: "game_started", content: { your_data: player2_data, other_player_data: player1_data } }));
                 break;
             }
 
-            case "request_level_change": {
-                // ... (sua lógica de request_level_change continua a mesma) ...
-                if (room) {
-                    console.log(`Recebido pedido para mudar para o nível ${data.content.level_path} na sala ${socket.roomId}`);
-                    const command = {
-                        cmd: "change_level",
-                        content: { level_path: data.content.level_path }
-                    };
-                    room.players.forEach(client => {
-                        if (client.readyState === WebSocket.OPEN) {
-                            client.send(JSON.stringify(command));
-                        }
-                    });
-                }
-                break;
-            }
-
-            // --- INÍCIO DAS NOVAS ADIÇÕES ---
             case "enter_portal": {
                 if (room) {
-                    console.log(`Jogador ${socket.uuid} entrou no portal na sala ${socket.roomId}.`);
-                    room.playersInPortal.add(socket.uuid); // Adiciona o jogador ao Set
-
-                    // Verifica se os dois jogadores estão no portal
+                    room.playersInPortal.add(socket.uuid);
                     if (room.playersInPortal.size === 2) {
-                        console.log(`Ambos os jogadores no portal! Trocando de nível para ${data.content.next_level}`);
+                        console.log(`Ambos no portal! Sorteando novos papéis para o nível ${data.content.next_level}`);
                         
+                        // --- LÓGICA DE RE-SORTEIO ADICIONADA AQUI ---
+                        const [player1_socket, player2_socket] = room.players;
+                        const roles = ["prisioneiro", "ajudante"];
+                        const isPlayer1Prisoner = Math.random() < 0.5;
+                        const player1_role = isPlayer1Prisoner ? roles[0] : roles[1];
+                        const player2_role = isPlayer1Prisoner ? roles[1] : roles[0];
+                        // --- FIM DA LÓGICA DE RE-SORTEIO ---
+
                         const command = {
                             cmd: "change_level",
-                            content: { level_path: data.content.next_level }
+                            content: {
+                                level_path: data.content.next_level,
+                                // Enviamos os novos papéis junto com o caminho do nível
+                                new_roles: {
+                                    [player1_socket.uuid]: player1_role,
+                                    [player2_socket.uuid]: player2_role
+                                }
+                            }
                         };
                         
                         room.players.forEach(client => {
                             client.send(JSON.stringify(command));
-                        });
-
-                        // Limpa o portal para o próximo nível
+});
                         room.playersInPortal.clear();
                     }
                 }
@@ -154,12 +131,10 @@ wss.on("connection", (socket) => {
 
             case "leave_portal": {
                 if (room) {
-                    console.log(`Jogador ${socket.uuid} saiu do portal na sala ${socket.roomId}.`);
-                    room.playersInPortal.delete(socket.uuid); // Remove o jogador do Set
+                    room.playersInPortal.delete(socket.uuid);
                 }
                 break;
             }
-            // --- FIM DAS NOVAS ADIÇÕES ---
         }
     });
 

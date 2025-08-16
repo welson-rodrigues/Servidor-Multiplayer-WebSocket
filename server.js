@@ -74,7 +74,6 @@ wss.on("connection", (socket) => {
                 const roomId = data.content.code.toUpperCase();
                 const roomToJoin = rooms.get(roomId);
                 if (!roomToJoin || roomToJoin.players.length >= 2) { 
-                    // Lógica de erro simplificada
                     socket.send(JSON.stringify({ cmd: "error", content: { msg: "Sala não encontrada ou cheia." } }));
                     return;
                 }
@@ -100,19 +99,16 @@ wss.on("connection", (socket) => {
                     if (room.playersInPortal.size === 2) {
                         console.log(`Ambos no portal! Sorteando novos papéis para o nível ${data.content.next_level}`);
                         
-                        // --- LÓGICA DE RE-SORTEIO ADICIONADA AQUI ---
                         const [player1_socket, player2_socket] = room.players;
                         const roles = ["prisioneiro", "ajudante"];
                         const isPlayer1Prisoner = Math.random() < 0.5;
                         const player1_role = isPlayer1Prisoner ? roles[0] : roles[1];
                         const player2_role = isPlayer1Prisoner ? roles[1] : roles[0];
-                        // --- FIM DA LÓGICA DE RE-SORTEIO ---
 
                         const command = {
                             cmd: "change_level",
                             content: {
                                 level_path: data.content.next_level,
-                                // Enviamos os novos papéis junto com o caminho do nível
                                 new_roles: {
                                     [player1_socket.uuid]: player1_role,
                                     [player2_socket.uuid]: player2_role
@@ -120,9 +116,14 @@ wss.on("connection", (socket) => {
                             }
                         };
                         
+                        // --- INÍCIO DA CORREÇÃO ---
                         room.players.forEach(client => {
-                            client.send(JSON.stringify(command));
-});
+                            if (client.readyState === WebSocket.OPEN) {
+                                client.send(JSON.stringify(command));
+                            }
+                        }); // O 'forEach' termina corretamente aqui.
+                        // --- FIM DA CORREÇÃO ---
+
                         room.playersInPortal.clear();
                     }
                 }
@@ -139,17 +140,26 @@ wss.on("connection", (socket) => {
     });
 
     socket.on("close", () => {
-        // ... (sua lógica de desconexão continua a mesma) ...
         console.log(`Cliente ${uuid} desconectado.`);
-        const room = rooms.get(socket.roomId);
+        const roomId = socket.roomId; // Guarda o ID da sala antes de qualquer coisa
+        const room = rooms.get(roomId);
+        
         if (room) {
+            // Remove o jogador que desconectou da lista de jogadores
+            room.players = room.players.filter(player => player !== socket);
+
+            // Avisa o jogador restante
             room.players.forEach(client => {
-                if (client !== socket && client.readyState === WebSocket.OPEN) {
+                if (client.readyState === WebSocket.OPEN) {
                     client.send(JSON.stringify({ cmd: "partner_disconnected", content: { uuid: socket.uuid } }));
                 }
             });
-            rooms.delete(socket.roomId);
-            console.log(`Sala ${socket.roomId} removida.`);
+
+            // Se a sala ficar vazia, apaga a sala
+            if (room.players.length === 0) {
+                rooms.delete(roomId);
+                console.log(`Sala ${roomId} ficou vazia e foi removida.`);
+            }
         }
     });
 });

@@ -2,7 +2,7 @@ const express = require("express");
 const WebSocket = require("ws");
 const { v4: uuidv4 } = require("uuid");
 
-console.log('O arquivo playerlist.js não é mais necessário para esta implementação.');
+console.log('Servidor com sistema de salas e portal INICIADO.');
 
 const app = express();
 const PORT = process.env.PORT || 9090;
@@ -11,11 +11,8 @@ const server = app.listen(PORT, () => {
 });
 
 const wss = new WebSocket.Server({ server });
-
-// Gerenciador de salas
 const rooms = new Map();
 
-// Função para gerar um código de sala simples
 function generateRoomCode(length = 5) {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let result = '';
@@ -40,18 +37,15 @@ wss.on("connection", (socket) => {
         }
 
         const room = rooms.get(socket.roomId);
+        // Adicionamos uma verificação aqui: se a sala não existe E o comando não é para criar/entrar, ignora.
+        if (!room && !["create_room", "join_room"].includes(data.cmd)) {
+            return;
+        }
 
-        // Lógica de comunicação DENTRO de uma partida
+        // Lógica de comunicação DENTRO de uma partida (continua igual)
         if (room && ["position", "action", "chat"].includes(data.cmd)) {
-            // Reenvia a mensagem para o outro jogador na mesma sala
             room.players.forEach(client => {
                 if (client !== socket && client.readyState === WebSocket.OPEN) {
-                    // Adiciona o UUID do remetente para o cliente saber quem enviou
-                    const originalContent = data.content || {};
-                    const newContent = { ...originalContent, uuid: socket.uuid };
-                    const relayedMessage = { cmd: data.cmd, content: newContent };
-                    
-                    // Se for chat, o formato é um pouco diferente
                     if (data.cmd === "chat") {
                          client.send(JSON.stringify({ cmd: "new_chat_message", content: { msg: data.content.msg } }));
                     } else if(data.cmd === "position") {
@@ -64,11 +58,15 @@ wss.on("connection", (socket) => {
             return;
         }
 
-        // Lógica de GERENCIAMENTO DE SALA (criar/entrar)
+        // Lógica de GERENCIAMENTO DE SALA E JOGO
         switch (data.cmd) {
             case "create_room": {
                 const newRoomId = generateRoomCode();
-                rooms.set(newRoomId, { players: [socket] });
+                // ALTERAÇÃO 1: A sala agora guarda um Set para os jogadores no portal
+                rooms.set(newRoomId, {
+                    players: [socket],
+                    playersInPortal: new Set() // Guarda os UUIDs de quem está no portal
+                });
                 socket.roomId = newRoomId;
                 console.log(`Jogador ${uuid} criou a sala ${newRoomId}.`);
                 socket.send(JSON.stringify({
@@ -79,6 +77,7 @@ wss.on("connection", (socket) => {
             }
 
             case "join_room": {
+                // ... (sua lógica de join_room continua exatamente a mesma) ...
                 const roomId = data.content.code.toUpperCase();
                 const roomToJoin = rooms.get(roomId);
 
@@ -100,8 +99,6 @@ wss.on("connection", (socket) => {
                 const isPlayer1Prisoner = Math.random() < 0.5;
                 const player1_role = isPlayer1Prisoner ? roles[0] : roles[1];
                 const player2_role = isPlayer1Prisoner ? roles[1] : roles[0];
-                //const prisoner_pos = { x: 150, y: 525 };
-                //const helper_pos = { x: 450, y: 525 };
                 const player1_start_pos = { x: 0, y: 0 }; 
                 const player2_start_pos = { x: 0, y: 0 };
                 const player1_data = { uuid: player1_socket.uuid, role: player1_role, x: player1_start_pos.x, y: player1_start_pos.y };
@@ -112,11 +109,10 @@ wss.on("connection", (socket) => {
                 break;
             }
 
-            // NOVO COMANDO AQUI
             case "request_level_change": {
+                // ... (sua lógica de request_level_change continua a mesma) ...
                 if (room) {
                     console.log(`Recebido pedido para mudar para o nível ${data.content.level_path} na sala ${socket.roomId}`);
-                    // Reenvia o comando para TODOS os jogadores na sala
                     const command = {
                         cmd: "change_level",
                         content: { level_path: data.content.level_path }
@@ -129,11 +125,46 @@ wss.on("connection", (socket) => {
                 }
                 break;
             }
-    
+
+            // --- INÍCIO DAS NOVAS ADIÇÕES ---
+            case "enter_portal": {
+                if (room) {
+                    console.log(`Jogador ${socket.uuid} entrou no portal na sala ${socket.roomId}.`);
+                    room.playersInPortal.add(socket.uuid); // Adiciona o jogador ao Set
+
+                    // Verifica se os dois jogadores estão no portal
+                    if (room.playersInPortal.size === 2) {
+                        console.log(`Ambos os jogadores no portal! Trocando de nível para ${data.content.next_level}`);
+                        
+                        const command = {
+                            cmd: "change_level",
+                            content: { level_path: data.content.next_level }
+                        };
+                        
+                        room.players.forEach(client => {
+                            client.send(JSON.stringify(command));
+                        });
+
+                        // Limpa o portal para o próximo nível
+                        room.playersInPortal.clear();
+                    }
+                }
+                break;
+            }
+
+            case "leave_portal": {
+                if (room) {
+                    console.log(`Jogador ${socket.uuid} saiu do portal na sala ${socket.roomId}.`);
+                    room.playersInPortal.delete(socket.uuid); // Remove o jogador do Set
+                }
+                break;
+            }
+            // --- FIM DAS NOVAS ADIÇÕES ---
         }
     });
 
     socket.on("close", () => {
+        // ... (sua lógica de desconexão continua a mesma) ...
         console.log(`Cliente ${uuid} desconectado.`);
         const room = rooms.get(socket.roomId);
         if (room) {

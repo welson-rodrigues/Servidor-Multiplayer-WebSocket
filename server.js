@@ -111,6 +111,25 @@ wss.on("connection", (socket) => {
                 player2_socket.send(JSON.stringify({ cmd: "game_started", content: { your_data: player2_data, other_player_data: player1_data } }));
                 break;
             }
+
+            // NOVO COMANDO AQUI
+            case "request_level_change": {
+                if (room) {
+                    console.log(`Recebido pedido para mudar para o nível ${data.content.level_path} na sala ${socket.roomId}`);
+                    // Reenvia o comando para TODOS os jogadores na sala
+                    const command = {
+                        cmd: "change_level",
+                        content: { level_path: data.content.level_path }
+                    };
+                    room.players.forEach(client => {
+                        if (client.readyState === WebSocket.OPEN) {
+                            client.send(JSON.stringify(command));
+                        }
+                    });
+                }
+                break;
+            }
+    
         }
     });
 

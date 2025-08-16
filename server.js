@@ -100,10 +100,10 @@ wss.on("connection", (socket) => {
                 const isPlayer1Prisoner = Math.random() < 0.5;
                 const player1_role = isPlayer1Prisoner ? roles[0] : roles[1];
                 const player2_role = isPlayer1Prisoner ? roles[1] : roles[0];
-                const prisoner_pos = { x: 150, y: 525 };
-                const helper_pos = { x: 450, y: 525 };
-                const player1_start_pos = player1_role === "prisioneiro" ? prisoner_pos : helper_pos;
-                const player2_start_pos = player2_role === "prisioneiro" ? prisoner_pos : helper_pos;
+                //const prisoner_pos = { x: 150, y: 525 };
+                //const helper_pos = { x: 450, y: 525 };
+                const player1_start_pos = { x: 0, y: 0 }; 
+                const player2_start_pos = { x: 0, y: 0 };
                 const player1_data = { uuid: player1_socket.uuid, role: player1_role, x: player1_start_pos.x, y: player1_start_pos.y };
                 const player2_data = { uuid: player2_socket.uuid, role: player2_role, x: player2_start_pos.x, y: player2_start_pos.y };
 

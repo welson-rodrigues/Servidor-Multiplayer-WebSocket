@@ -1,126 +1,130 @@
 const express = require("express");
 const WebSocket = require("ws");
-const { v4 } = require("uuid");
-const playerlist = require("./playerlist.js");
+const { v4: uuidv4 } = require("uuid");
+
+console.log('O arquivo playerlist.js não é mais necessário para esta implementação.');
 
 const app = express();
-const PORT = 9090;
+const PORT = process.env.PORT || 9090;
 const server = app.listen(PORT, () => {
     console.log("Server listening on port: " + PORT);
 });
 
 const wss = new WebSocket.Server({ server });
 
-wss.on("connection", async (socket) => {
-    const uuid = v4();
-    await playerlist.add(uuid);
-    const newPlayer = await playerlist.get(uuid);
+// Gerenciador de salas
+const rooms = new Map();
 
-    // Enviar UUID ao cliente
-    socket.send(JSON.stringify({
-        cmd: "joined_server",
-        content: { msg: "Bem-vindo ao servidor!", uuid }
-    }));
+// Função para gerar um código de sala simples
+function generateRoomCode(length = 5) {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+}
 
-    // Enviar jogador local
-    socket.send(JSON.stringify({
-        cmd: "spawn_local_player",
-        content: { msg: "Spawning local (you) player!", player: newPlayer }
-    }));
-
-    // Enviar novo jogador para todos os outros
-    wss.clients.forEach((client) => {
-        if (client !== socket && client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({
-                cmd: "spawn_new_player",
-                content: { msg: "Spawning new network player!", player: newPlayer }
-            }));
-        }
-    });
-
-    // Enviar todos os outros jogadores ao novo cliente
-    socket.send(JSON.stringify({
-        cmd: "spawn_network_players",
-        content: {
-            msg: "Spawning network players!",
-            players: await playerlist.getAll()
-        }
-    }));
+wss.on("connection", (socket) => {
+    const uuid = uuidv4();
+    socket.uuid = uuid;
+    console.log(`Cliente ${uuid} estabeleceu conexão.`);
 
     socket.on("message", (message) => {
         let data;
         try {
             data = JSON.parse(message.toString());
         } catch (err) {
-            console.error("Erro ao fazer parse do JSON:", err);
+            console.error("Erro no JSON:", err);
             return;
         }
 
-        if (data.cmd === "position") {
-            playerlist.update(uuid, data.content.x, data.content.y);
+        const room = rooms.get(socket.roomId);
 
-            const update = {
-                cmd: "update_position",
-                content: {
-                    uuid,
-                    x: data.content.x,
-                    y: data.content.y
-                }
-            };
-
-            wss.clients.forEach((client) => {
+        // Lógica de comunicação DENTRO de uma partida
+        if (room && ["position", "action", "chat"].includes(data.cmd)) {
+            // Reenvia a mensagem para o outro jogador na mesma sala
+            room.players.forEach(client => {
                 if (client !== socket && client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify(update));
+                    // Adiciona o UUID do remetente para o cliente saber quem enviou
+                    const originalContent = data.content || {};
+                    const newContent = { ...originalContent, uuid: socket.uuid };
+                    const relayedMessage = { cmd: data.cmd, content: newContent };
+                    
+                    // Se for chat, o formato é um pouco diferente
+                    if (data.cmd === "chat") {
+                         client.send(JSON.stringify({ cmd: "new_chat_message", content: { msg: data.content.msg } }));
+                    } else if(data.cmd === "position") {
+                         client.send(JSON.stringify({ cmd: "update_position", content: { uuid: socket.uuid, x: data.content.x, y: data.content.y } }));
+                    } else if(data.cmd === "action") {
+                         client.send(JSON.stringify({ cmd: "update_action", content: { uuid: socket.uuid, name: data.content.name } }));
+                    }
                 }
             });
+            return;
         }
 
-        if (data.cmd === "action") {
-            // Reenvia a ação (ex: pulo) para todos os outros jogadores
-            const actionUpdate = {
-                cmd: "update_action", // Nova mensagem para os clientes
-                content: {
-                    uuid,
-                    name: data.content.name
-                }
-            };
-            wss.clients.forEach((client) => {
-                if (client !== socket && client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify(actionUpdate));
-                }
-            });
-        }
+        // Lógica de GERENCIAMENTO DE SALA (criar/entrar)
+        switch (data.cmd) {
+            case "create_room": {
+                const newRoomId = generateRoomCode();
+                rooms.set(newRoomId, { players: [socket] });
+                socket.roomId = newRoomId;
+                console.log(`Jogador ${uuid} criou a sala ${newRoomId}.`);
+                socket.send(JSON.stringify({
+                    cmd: "room_created",
+                    content: { code: newRoomId, uuid: uuid }
+                }));
+                break;
+            }
 
-        if (data.cmd === "chat") {
-            const chat = {
-                cmd: "new_chat_message",
-                content: {
-                    msg: data.content.msg
-                }
-            };
+            case "join_room": {
+                const roomId = data.content.code.toUpperCase();
+                const roomToJoin = rooms.get(roomId);
 
-            wss.clients.forEach((client) => {
-                if (client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify(chat));
+                if (!roomToJoin) {
+                    socket.send(JSON.stringify({ cmd: "error", content: { msg: "Sala não encontrada." } }));
+                    return;
                 }
-            });
+                if (roomToJoin.players.length >= 2) {
+                    socket.send(JSON.stringify({ cmd: "error", content: { msg: "A sala está cheia." } }));
+                    return;
+                }
+
+                socket.roomId = roomId;
+                roomToJoin.players.push(socket);
+                console.log(`Jogador ${uuid} entrou na sala ${roomId}. Iniciando jogo.`);
+
+                const [player1_socket, player2_socket] = roomToJoin.players;
+                const roles = ["prisioneiro", "ajudante"];
+                const isPlayer1Prisoner = Math.random() < 0.5;
+                const player1_role = isPlayer1Prisoner ? roles[0] : roles[1];
+                const player2_role = isPlayer1Prisoner ? roles[1] : roles[0];
+                const prisoner_pos = { x: 150, y: 525 };
+                const helper_pos = { x: 450, y: 525 };
+                const player1_start_pos = player1_role === "prisioneiro" ? prisoner_pos : helper_pos;
+                const player2_start_pos = player2_role === "prisioneiro" ? prisoner_pos : helper_pos;
+                const player1_data = { uuid: player1_socket.uuid, role: player1_role, x: player1_start_pos.x, y: player1_start_pos.y };
+                const player2_data = { uuid: player2_socket.uuid, role: player2_role, x: player2_start_pos.x, y: player2_start_pos.y };
+
+                player1_socket.send(JSON.stringify({ cmd: "game_started", content: { your_data: player1_data, other_player_data: player2_data } }));
+                player2_socket.send(JSON.stringify({ cmd: "game_started", content: { your_data: player2_data, other_player_data: player1_data } }));
+                break;
+            }
         }
     });
 
     socket.on("close", () => {
         console.log(`Cliente ${uuid} desconectado.`);
-
-        // Remover da lista
-        playerlist.remove(uuid);
-
-        // Avisar os outros jogadores
-        wss.clients.forEach((client) => {
-            if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({
-                    cmd: "player_disconnected",
-                    content: { uuid }
-                }));
-            }
-        });
+        const room = rooms.get(socket.roomId);
+        if (room) {
+            room.players.forEach(client => {
+                if (client !== socket && client.readyState === WebSocket.OPEN) {
+                    client.send(JSON.stringify({ cmd: "partner_disconnected", content: { uuid: socket.uuid } }));
+                }
+            });
+            rooms.delete(socket.roomId);
+            console.log(`Sala ${socket.roomId} removida.`);
+        }
     });
 });
